@@ -4,6 +4,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -76,7 +77,7 @@ type User struct {
 	Email     string    `json:"email"`
 }
 
-func (cfg *apiConfig) handlercreateUser(w http.ResponseWriter, r *http.Request) {
+func (cfg *apiConfig) handlerCreateUser(w http.ResponseWriter, r *http.Request) {
 	r_email := struct {
 		Email string `json:"email"`
 	}{}
@@ -100,48 +101,96 @@ func (cfg *apiConfig) handlercreateUser(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-//Create CHIRP 
+// Create CHIRP
 type Chirp struct {
-	ID uuid.UUID `json:"id"`
-    CreatedAt time.Time `json:"created_at"`
-    UpdatedAt time.Time `json:"updated_at"`
-	Body string `json:"body"`
-	UserID uuid.UUID `json:"user_id"`
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
 }
 
-func (cfg *apiConfig) handlercreateChirp(w http.ResponseWriter, r *http.Request) {
-	c_body := struct{
-		Body string `json:"body"`
+func (cfg *apiConfig) handlerCreateChirp(w http.ResponseWriter, r *http.Request) {
+	c_body := struct {
+		Body   string    `json:"body"`
 		UserID uuid.UUID `json:"user_id"`
 	}{}
 	err := json.NewDecoder(r.Body).Decode(&c_body)
 	if err != nil {
 		respondWithError(w, 500, "Couldn't decode parameters")
-		return 
+		return
 	}
 	validatedB, err := validateChirp(c_body.Body)
 	if err != nil {
 		respondWithError(w, 400, err.Error())
-		return 
+		return
 	}
 
 	chirp, err := cfg.dbQueries.CreateChirp(r.Context(), database.CreateChirpParams{
-		Body: validatedB,
+		Body:   validatedB,
 		UserID: c_body.UserID,
 	})
 	if err != nil {
 		respondWithError(w, 500, "Couldn't create chirp")
-		return 
+		return
 	}
 	respondWithJSON(w, 201, Chirp{
-		ID: chirp.ID,
+		ID:        chirp.ID,
 		CreatedAt: chirp.CreatedAt,
 		UpdatedAt: chirp.UpdatedAt,
-		Body: chirp.Body,
-		UserID: chirp.UserID,
+		Body:      chirp.Body,
+		UserID:    chirp.UserID,
 	})
-
 }
+
+//Get all chirps
+
+func (cfg *apiConfig) handlerGetChirps(w http.ResponseWriter, r *http.Request) {
+	chirps, err := cfg.dbQueries.GetChirps(r.Context())
+	if err != nil {
+		respondWithError(w, 500, "Internal Server Error")
+		return
+	}
+	var structuredchirps []Chirp
+	for _, chirp := range chirps {
+		strChirp := Chirp{
+			ID:        chirp.ID,
+			CreatedAt: chirp.CreatedAt,
+			UpdatedAt: chirp.UpdatedAt,
+			Body:      chirp.Body,
+			UserID:    chirp.UserID,
+		}
+		structuredchirps = append(structuredchirps, strChirp)
+	}
+	respondWithJSON(w, 200, structuredchirps)
+}
+
+// Get chirp
+func (cfg *apiConfig) handlerGetChirp(w http.ResponseWriter, r *http.Request) {
+	chirpIDStr := r.PathValue("chirpID")
+	chirpID, err := uuid.Parse(chirpIDStr)
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "Invalid chirp ID")
+		return
+	}
+	dbChirp, err := cfg.dbQueries.GetChirp(r.Context(), chirpID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			respondWithError(w, http.StatusNotFound, "Chirp not found")
+			return
+		}
+		respondWithError(w, http.StatusInternalServerError, "Couldn't retrieve chirp")
+		return
+	}
+	respondWithJSON(w, http.StatusOK, Chirp{
+		ID:        dbChirp.ID,
+		CreatedAt: dbChirp.CreatedAt,
+		UpdatedAt: dbChirp.UpdatedAt,
+		Body:      dbChirp.Body,
+		UserID:    dbChirp.UserID,
+	})
+}
+
 func main() {
 
 	// ✅ STEP 1: Load .env file
@@ -177,9 +226,10 @@ func main() {
 	mux.HandleFunc("GET /api/healthz", handlerOne)
 	mux.HandleFunc("GET /admin/metrics", apiConf.handlerReqCount)
 	mux.HandleFunc("POST /admin/reset", apiConf.handlerResetCount)
-	mux.HandleFunc("POST /api/chirps", apiConf.handlercreateChirp)
-	mux.HandleFunc("POST /api/users", apiConf.handlercreateUser)
-
+	mux.HandleFunc("POST /api/chirps", apiConf.handlerCreateChirp)
+	mux.HandleFunc("POST /api/users", apiConf.handlerCreateUser)
+	mux.HandleFunc("GET /api/chirps", apiConf.handlerGetChirps)
+	mux.HandleFunc("GET /api/chirps/{chirpID}", apiConf.handlerGetChirp)
 	server := &http.Server{
 		Addr:    ":8080",
 		Handler: mux,
