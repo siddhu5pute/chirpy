@@ -1,5 +1,7 @@
 # Chirpy 🐦
 
+![Chirpy Logo](assets/logo.png)
+
 A RESTful JSON API backend built in Go — a Twitter-like microblogging platform where users can post short messages called "chirps", follow an authenticated session system, and optionally upgrade to **Chirpy Red** membership.
 
 ---
